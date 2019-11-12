@@ -3,16 +3,23 @@
 #include <fstream>
 #include <cstdlib>
 #include "pin.H"
+#include <vector>
 
 using std::vector;
+using std::string;
+using std::endl;
+using std::cerr;
+
+std::ostream * out = &cerr;
 
 /*
 STRUCTS
 */
 
 int vpt_depth = 1;
-int vpt_depth = 1;
+int vpt_length = 1;
 int ct_length = 1;
+
 UINT64 ct_mask;
 UINT64 vpt_mask;
 
@@ -27,7 +34,8 @@ ct_entry* ClassTable;
 struct vpt_entry {
     bool valid;
     UINT64 addr;
-    vector<UINT64> val_hist(vpt_depth, NULL);
+    vpt_entry() : val_hist(vpt_depth, 0){}
+    vector<UINT64> val_hist;
 };
 
 vpt_entry* VPTable;
