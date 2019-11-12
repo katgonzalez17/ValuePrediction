@@ -19,10 +19,12 @@ KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,         "pintool",
 KNOB<BOOL>   KnobPid(KNOB_MODE_WRITEONCE,                "pintool",
                             "pid", "0", "Append pid to output");
 
+KNOB<UINT64> KnobInstLimit(KNOB_MODE_WRITEONCE,        "pintool",
+                            "inst_limit", "0", "Limit of instructions analyzed");
 // GLOBALS
 
-int CountCorrect;
-int CountSeen;
+UINT64 count_correct;
+UINT64 count_seen;
 
 // STRUCTS
 int vpt_depth = 1;
@@ -44,12 +46,12 @@ struct vpt_entry {
     bool valid;
     UINT64 addr;
     vpt_entry() : val_hist(vpt_depth, 0){}
-    vector<UINT64> val_hist;
+    vector<INT64> val_hist;
 };
 
 vpt_entry* VPTable;
 
-VOID CT_init()
+void CT_init()
 {
     for(int i = 0; i < ct_length; i++) {
         ClassTable[i].valid = false;
@@ -58,50 +60,12 @@ VOID CT_init()
     }
 }
 
-VOID VPT_init()
+void VPT_init()
 {
     for(int i = 0; i < vpt_depth; i++) {
         VPTable[i].valid = false;
         VPTable[i].addr = 0;
     }
-}
-
-UINT64 predict(ADDRINT ins_ptr){
-    // index into ct and vpt
-    UINT64 ct_index = ins_ptr & ct_mask;
-    UINT64 vpt_index = ins_ptr & vpt_mask;
-    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter < 4){
-	return 0;
-    } else {
-	return VPTable[vpt_index].val_hist.back();
-    }
-}
-
-VOID predictVal(ADDRINT ins_ptr, INT64 value){
-    CountSeen++;
-    if (lookup(ins_ptr))
-    {
-	if(prediction(ins_ptr) == value)
-	    CountCorrect++;
-	update(ins_ptr, value);
-    }
-    else
-    {
-	insert(ins_ptr);
-	update(ins_ptr, value);
-    }
-    if (CountSeen == KnobInstLimit.Value())
-    {
-	PrintResults(true);
-	PIN_ExitProcess(EXIT_SUCCESS);
-    }
-}
-
-static INT32 Usage() {
-    cerr << "This pin tool collects a profile of the Lipasti value predictor\n";
-    cerr << KNOB_BASE::StringKnobSummary();
-    cerr << endl;
-    return -1;
 }
 
 void PrintResults(bool limit_reached) {
@@ -116,6 +80,73 @@ void PrintResults(bool limit_reached) {
     else {
         *out << "Reason: fini\n";
     }
+}
+
+bool in_tables(ADDRINT ins_ptr) {
+    UINT64 ct_index = ins_ptr & ct_mask;
+    UINT64 vpt_index = ins_ptr & vpt_mask;
+
+    if (!ClassTable[ct_index].valid || VPTable[vpt_index].valid) {
+        return false;
+    }
+
+    if (ClassTable[ct_index].addr != ins_ptr || VPTable[vpt_index].addr != ins_ptr) {
+        return false;
+    }
+    return true;
+}
+
+INT64 prediction(ADDRINT ins_ptr) {
+    // index into ct and vpt
+    UINT64 ct_index = ins_ptr & ct_mask;
+    UINT64 vpt_index = ins_ptr & vpt_mask;
+    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter < 4) {
+        return 0;
+    } else {
+        return VPTable[vpt_index].val_hist.back();
+    }
+}
+
+void insert(ADDRINT ins_ptr) {
+    UINT64 ct_index = ins_ptr & ct_mask;
+    UINT64 vpt_index = ins_ptr & vpt_mask;
+
+    ClassTable[ct_index].valid = true;
+    ClassTable[ct_index].counter = 0;
+    ClassTable[ct_index].addr = ins_ptr;
+
+    VPTable[vpt_index].valid = true;
+    VPTable[vpt_index].addr = ins_ptr;
+    std::fill(VPTable[vpt_index].val_hist.begin(), VPTable[vpt_index].val_hist.end(), NULL);
+}
+
+void update(ADDRINT ins_ptr, INT64 actual_value) {
+}
+
+void predictVal(ADDRINT ins_ptr, INT64 actual_value) {
+    count_seen++;
+    if (in_tables(ins_ptr)) {
+        if(prediction(ins_ptr) == actual_value) {
+            count_correct++;
+        }
+        update(ins_ptr, actual_value);
+    }
+    else {
+        insert(ins_ptr);
+        update(ins_ptr, actual_value);
+    }
+
+    if (count_seen == KnobInstLimit.Value()) {
+        PrintResults(true);
+        PIN_ExitProcess(EXIT_SUCCESS);
+    }
+}
+
+static INT32 Usage() {
+    cerr << "This pin tool collects a profile of the Lipasti value predictor\n";
+    cerr << KNOB_BASE::StringKnobSummary();
+    cerr << endl;
+    return -1;
 }
 
 // For non-Load instructions we need to use their Opcodes (no built-in functions)
@@ -190,7 +221,12 @@ bool is_int_div(INS ins) {
 
 void Instruction(INS ins, void *v)
 {
-    //if (INS_IsMemoryRead(ins))
+    // TODO: we need a way to get the destination register
+    /*if (INS_IsMemoryRead(ins)) {
+        INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) PredictVal,
+                       IARG_INST_PTR, IARG_REG_VALUE,  IARG_END);
+    }
+    */
     //if (is_fp_add(ins))
     //if (is_fp_sub(ins))
     //if (is_fp_mul(ins))
