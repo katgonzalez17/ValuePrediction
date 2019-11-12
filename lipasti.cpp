@@ -79,6 +79,8 @@ void PrintResults(bool limit_reached) {
     else {
         *out << "Reason: fini\n";
     }
+    *out << "Count Seen: " << count_seen << endl;
+    *out << "Count Correct: " << count_correct << endl;
 }
 
 bool in_tables(ADDRINT ins_ptr) {
@@ -126,33 +128,35 @@ void update(ADDRINT ins_ptr, INT64 actual_val) {
     UINT64 vpt_index = ins_ptr & vpt_mask;
 
     INT64 pred_val;
-    if (VPTable[vpt_index].val_hist.size() > 0)
-	pred_val = VPTable[vpt_index].val_hist.back();
-    else
-	pred_val = actual_val - 1;
+    if (VPTable[vpt_index].val_hist.size() > 0) {
+        pred_val = VPTable[vpt_index].val_hist.back();
+    }
+    else {
+        pred_val = actual_val - 1;
+    }
 
     if (ClassTable[ct_index].counter > 0 && pred_val != actual_val) {
-	ClassTable[ct_index].counter--;
+        ClassTable[ct_index].counter--;
     }
     if (ClassTable[ct_index].counter < 7 && pred_val == actual_val) {
-	ClassTable[ct_index].counter++;
+        ClassTable[ct_index].counter++;
     }
 
     bool in_vpt = false;
 
     for (long int i = 0; i < (long int)VPTable[vpt_index].val_hist.size(); i++) {
-	if (actual_val == VPTable[vpt_index].val_hist[i]) {
-	    in_vpt = true;
-	    VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin()+i);
-	    VPTable[vpt_index].val_hist.push_back(actual_val);
-	}
+        if (actual_val == VPTable[vpt_index].val_hist[i]) {
+            in_vpt = true;
+            VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin()+i);
+            VPTable[vpt_index].val_hist.push_back(actual_val);
+        }
     }
     if (!in_vpt && VPTable[vpt_index].val_hist.size() < (UINT64)vpt_depth) {
-	VPTable[vpt_index].val_hist.push_back(actual_val);
+        VPTable[vpt_index].val_hist.push_back(actual_val);
     } else if (!in_vpt && VPTable[vpt_index].val_hist.size() >= (UINT64)vpt_depth) {
         // delete the front of the vector, then push_back
-	VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin());
-	VPTable[vpt_index].val_hist.push_back(actual_val);
+        VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin());
+        VPTable[vpt_index].val_hist.push_back(actual_val);
     }
 }
 
