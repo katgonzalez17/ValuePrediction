@@ -12,10 +12,14 @@ using std::cerr;
 
 std::ostream * out = &cerr;
 
-/*
-STRUCTS
-*/
+// KNOBs
+KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,         "pintool",
+                            "outfile", "tool.out", "Output file for the pintool");
 
+KNOB<BOOL>   KnobPid(KNOB_MODE_WRITEONCE,                "pintool",
+                            "pid", "0", "Append pid to output");
+
+// STRUCTS
 int vpt_depth = 1;
 int vpt_length = 1;
 int ct_length = 1;
