@@ -45,7 +45,6 @@ ct_entry* ClassTable;
 struct vpt_entry {
     bool valid;
     UINT64 addr;
-    vpt_entry() : val_hist(vpt_depth, 0){}
     vector<INT64> val_hist;
 };
 
@@ -120,7 +119,41 @@ void insert(ADDRINT ins_ptr) {
     std::fill(VPTable[vpt_index].val_hist.begin(), VPTable[vpt_index].val_hist.end(), NULL);
 }
 
-void update(ADDRINT ins_ptr, INT64 actual_value) {
+void update(ADDRINT ins_ptr, INT64 actual_val) {
+
+    // need to iterate through vector and see if actual value contained
+    UINT64 ct_index = ins_ptr & ct_mask;
+    UINT64 vpt_index = ins_ptr & vpt_mask;
+
+    INT64 pred_val;
+    if (VPTable[vpt_index].val_hist.size() > 0)
+	pred_val = VPTable[vpt_index].val_hist.back();
+    else
+	pred_val = actual_val - 1;
+
+    if (ClassTable[ct_index].counter > 0 && pred_val != actual_val) {
+	ClassTable[ct_index].counter--;
+    }
+    if (ClassTable[ct_index].counter < 7 && pred_val == actual_val) {
+	ClassTable[ct_index].counter++;
+    }
+
+    bool in_vpt = false;
+
+    for (long int i = 0; i < (long int)VPTable[vpt_index].val_hist.size(); i++) {
+	if (actual_val == VPTable[vpt_index].val_hist[i]) {
+	    in_vpt = true;
+	    VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin()+i);
+	    VPTable[vpt_index].val_hist.push_back(actual_val);
+	}
+    }
+    if (!in_vpt && VPTable[vpt_index].val_hist.size() < (UINT64)vpt_depth) {
+	VPTable[vpt_index].val_hist.push_back(actual_val);
+    } else if (!in_vpt && VPTable[vpt_index].val_hist.size() >= (UINT64)vpt_depth) {
+        // delete the front of the vector, then push_back
+	VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin());
+	VPTable[vpt_index].val_hist.push_back(actual_val);
+    }
 }
 
 void predictVal(ADDRINT ins_ptr, INT64 actual_value) {
