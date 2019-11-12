@@ -19,6 +19,11 @@ KNOB<string> KnobOutputFile(KNOB_MODE_WRITEONCE,         "pintool",
 KNOB<BOOL>   KnobPid(KNOB_MODE_WRITEONCE,                "pintool",
                             "pid", "0", "Append pid to output");
 
+// GLOBALS
+
+int CountCorrect;
+int CountSeen;
+
 // STRUCTS
 int vpt_depth = 1;
 int vpt_length = 1;
@@ -58,6 +63,37 @@ VOID VPT_init()
     for(int i = 0; i < vpt_depth; i++) {
         VPTable[i].valid = false;
         VPTable[i].addr = 0;
+    }
+}
+
+UINT64 predict(ADDRINT ins_ptr){
+    // index into ct and vpt
+    UINT64 ct_index = ins_ptr & ct_mask;
+    UINT64 vpt_index = ins_ptr & vpt_mask;
+    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter < 4){
+	return 0;
+    } else {
+	return VPTable[vpt_index].val_hist.back();
+    }
+}
+
+VOID predictVal(ADDRINT ins_ptr, INT64 value){
+    CountSeen++;
+    if (lookup(ins_ptr))
+    {
+	if(prediction(ins_ptr) == value)
+	    CountCorrect++;
+	update(ins_ptr, value);
+    }
+    else
+    {
+	insert(ins_ptr);
+	update(ins_ptr, value);
+    }
+    if (CountSeen == KnobInstLimit.Value())
+    {
+	PrintResults(true);
+	PIN_ExitProcess(EXIT_SUCCESS);
     }
 }
 
