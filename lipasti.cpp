@@ -36,7 +36,7 @@ UINT64 vpt_mask;
 
 struct ct_entry {
     bool valid;
-    UINT64 addr;
+    ADDRINT addr;
     UINT8 counter;
 };
 
@@ -44,8 +44,8 @@ ct_entry* ClassTable;
 
 struct vpt_entry {
     bool valid;
-    UINT64 addr;
-    vector<INT64> val_hist;
+    ADDRINT addr;
+    vector<ADDRINT> val_hist;
 };
 
 vpt_entry* VPTable;
@@ -87,7 +87,7 @@ bool in_tables(ADDRINT ins_ptr) {
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
 
-    if (!ClassTable[ct_index].valid || VPTable[vpt_index].valid) {
+    if (!ClassTable[ct_index].valid || !VPTable[vpt_index].valid) {
         return false;
     }
 
@@ -121,13 +121,13 @@ void insert(ADDRINT ins_ptr) {
     std::fill(VPTable[vpt_index].val_hist.begin(), VPTable[vpt_index].val_hist.end(), NULL);
 }
 
-void update(ADDRINT ins_ptr, INT64 actual_val) {
+void update(ADDRINT ins_ptr, ADDRINT actual_val) {
 
     // need to iterate through vector and see if actual value contained
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
 
-    INT64 pred_val;
+    ADDRINT pred_val;
     if (VPTable[vpt_index].val_hist.size() > 0) {
         pred_val = VPTable[vpt_index].val_hist.back();
     }
