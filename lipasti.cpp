@@ -28,8 +28,8 @@ UINT64 count_seen;
 
 // STRUCTS
 int vpt_depth = 1;
-int vpt_length = 1;
-int ct_length = 1;
+int vpt_size = 1024;
+int ct_size = 1024;
 
 UINT64 ct_mask;
 UINT64 vpt_mask;
@@ -52,7 +52,7 @@ vpt_entry* VPTable;
 
 void CT_init()
 {
-    for(int i = 0; i < ct_length; i++) {
+    for(int i = 0; i < ct_size; i++) {
         ClassTable[i].valid = false;
         ClassTable[i].addr = 0;
         ClassTable[i].counter = 0;
@@ -61,7 +61,7 @@ void CT_init()
 
 void VPT_init()
 {
-    for(int i = 0; i < vpt_depth; i++) {
+    for(int i = 0; i < vpt_size; i++) {
         VPTable[i].valid = false;
         VPTable[i].addr = 0;
     }
@@ -97,7 +97,7 @@ bool in_tables(ADDRINT ins_ptr) {
     return true;
 }
 
-INT64 prediction(ADDRINT ins_ptr) {
+ADDRINT prediction(ADDRINT ins_ptr) {
     // index into ct and vpt
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
@@ -135,6 +135,7 @@ void update(ADDRINT ins_ptr, INT64 actual_val) {
         pred_val = actual_val - 1;
     }
 
+    // 3 bit counter resolution
     if (ClassTable[ct_index].counter > 0 && pred_val != actual_val) {
         ClassTable[ct_index].counter--;
     }
@@ -160,7 +161,7 @@ void update(ADDRINT ins_ptr, INT64 actual_val) {
     }
 }
 
-void predictVal(ADDRINT ins_ptr, INT64 actual_value) {
+void predictValNonXmm(ADDRINT ins_ptr, ADDRINT actual_value) {
     count_seen++;
     if (in_tables(ins_ptr)) {
         if(prediction(ins_ptr) == actual_value) {
@@ -264,6 +265,23 @@ void Instruction(INS ins, void *v)
                        IARG_INST_PTR, IARG_REG_VALUE,  IARG_END);
     }
     */
+    if (is_int_mul(ins)) {
+        // Second operand is our dest reg; if it isn't we don't yet support it
+        if (INS_OperandIsReg(ins,1)) {
+            // First register in a multiply instruction is dest reg
+            REG dest_reg = INS_OperandReg(ins,0);
+            if (dest_reg) {
+                // TODO: create an Xmm predictValue function
+                if (REG_is_xmm(dest_reg)) {
+
+                }
+                else {
+                    INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
+                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
+                }
+            }
+        }
+    }
     //if (is_fp_add(ins))
     //if (is_fp_sub(ins))
     //if (is_fp_mul(ins))
@@ -282,7 +300,12 @@ int main(int argc, char *argv[]) {
     if( PIN_Init(argc,argv) ) {
         return Usage();
     }
-
+    ct_mask = ct_size - 1;
+    vpt_mask = vpt_size - 1;
+    ClassTable = new ct_entry[ct_size];
+    CT_init();
+    VPTable = new vpt_entry[vpt_size];
+    VPT_init();
     INS_AddInstrumentFunction(Instruction, 0);
     PIN_AddFiniFunction(fini, 0);
 
