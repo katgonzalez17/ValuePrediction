@@ -1,0 +1,4 @@
+
+./run-pin.bash obj-intel64/lipasti.so /usr/local/benchmarks/dealII_O3
+./run-pin.bash obj-intel64/lipasti.so /usr/local/benchmarks/libquantum_O3
+./run-pin.bash obj-intel64/lipasti.so /usr/local/benchmarks/hmmer_O3
