@@ -25,6 +25,12 @@ KNOB<UINT64> KnobInstLimit(KNOB_MODE_WRITEONCE,        "pintool",
 
 UINT64 count_correct;
 UINT64 count_seen;
+UINT64 count_int_mul_corr;
+UINT64 count_int_mul_seen;
+UINT64 count_fp_add_corr;
+UINT64 count_fp_add_seen;
+UINT64 count_fp_sub_corr;
+UINT64 count_fp_sub_seen;
 
 // STRUCTS
 int vpt_depth = 1;
@@ -66,6 +72,8 @@ void VPT_init()
         VPTable[i].addr = 0;
     }
 }
+
+// PRINT RESULTS HERE
 
 void PrintResults(bool limit_reached) {
     string output_file = KnobOutputFile.Value();
@@ -267,7 +275,10 @@ void Instruction(INS ins, void *v)
     */
     if (is_int_mul(ins)) {
         // Second operand is our dest reg; if it isn't we don't yet support it
-        if (INS_OperandIsReg(ins,1)) {
+	// *out << INS_Disassemble(ins) <<endl;
+	count_int_mul_seen++;
+        assert(INS_OperandIsReg(ins,0));
+	if (INS_OperandIsReg(ins,0)) {
             // First register in a multiply instruction is dest reg
             REG dest_reg = INS_OperandReg(ins,0);
             if (dest_reg) {
@@ -283,7 +294,48 @@ void Instruction(INS ins, void *v)
         }
     }
     //if (is_fp_add(ins))
+    if (is_fp_add(ins)) {
+        // Second operand is our dest reg; if it isn't we don't yet support it
+        count_fp_add_seen++;
+	assert(INS_OperandIsReg(ins,0));
+	if (INS_OperandIsReg(ins,0)) {
+            // First register in a multiply instruction is dest reg
+            REG dest_reg = INS_OperandReg(ins,0);
+            if (dest_reg) {
+                // TODO: create an Xmm predictValue function
+                if (REG_is_xmm(dest_reg)) {
+
+                }
+                else {
+                    INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
+                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
+                }
+            }
+        }
+    }
     //if (is_fp_sub(ins))
+    if (is_fp_sub(ins)) {
+        // Second operand is our dest reg; if it isn't we don't yet support it
+        assert(INS_OperandIsReg(ins,0));
+	count_fp_sub_seen++;
+	// *out << INS_Disassemble(ins) <<endl;
+	if (INS_OperandIsReg(ins,0)) {
+            // First register in a multiply instruction is dest reg
+            REG dest_reg = INS_OperandReg(ins,0);
+            if (dest_reg) {
+                // TODO: create an Xmm predictValue function
+                if (REG_is_xmm(dest_reg)) {
+
+                }
+                else {
+                    INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
+                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
+                }
+            }
+        } else {
+	    *out << "ASSERT FAILED" << endl;
+	}
+    }
     //if (is_fp_mul(ins))
     //if (is_fp_div(ins))
     //if (is_int_mul(ins))
