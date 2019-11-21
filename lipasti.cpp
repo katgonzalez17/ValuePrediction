@@ -23,14 +23,28 @@ KNOB<UINT64> KnobInstLimit(KNOB_MODE_WRITEONCE,        "pintool",
                             "inst_limit", "0", "Limit of instructions analyzed");
 // GLOBALS
 
+enum Ins_Types {int_mul, fp_add, fp_sub, fp_mul, fp_div, int_div};
+
 UINT64 count_correct;
 UINT64 count_seen;
+
 UINT64 count_int_mul_corr;
 UINT64 count_int_mul_seen;
+
 UINT64 count_fp_add_corr;
 UINT64 count_fp_add_seen;
+
 UINT64 count_fp_sub_corr;
 UINT64 count_fp_sub_seen;
+
+UINT64 count_fp_mul_corr;
+UINT64 count_fp_mul_seen;
+
+UINT64 count_fp_div_corr;
+UINT64 count_fp_div_seen;
+
+UINT64 count_int_div_corr;
+UINT64 count_int_div_seen;
 
 // STRUCTS
 int vpt_depth = 1;
@@ -178,26 +192,20 @@ void update(ADDRINT ins_ptr, ADDRINT actual_val) {
     }
 }
 
-void predictValNonXmm(ADDRINT ins_ptr, ADDRINT actual_value) {
+void predictValNonXmm(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type) {
     count_seen++;
     if (in_tables(ins_ptr)) {
         if(non_xmm_prediction(ins_ptr, false) == actual_value) {
             count_correct++;
-        }
-        update(ins_ptr, actual_value);
-    }
-    else {
-        insert(ins_ptr);
-        update(ins_ptr, actual_value);
-    }
-
-    if (count_seen == KnobInstLimit.Value()) {
-        PrintResults(true);
-        PIN_ExitProcess(EXIT_SUCCESS);
-    }
-}
-
-            count_correct++;
+	    // switchcase here
+	    switch(ins_type) {
+		case int_mul : count_int_mul_corr++; break;
+		case fp_add  : count_fp_add_corr++; break;
+		case fp_sub  : count_fp_sub_corr++; break;
+		case fp_mul  : count_fp_mul_corr++; break;
+		case fp_div  : count_fp_div_corr++; break;
+		case int_div : count_int_div_corr++; break;
+	    }
         }
         update(ins_ptr, actual_value);
     }
@@ -304,6 +312,7 @@ void Instruction(INS ins, void *v)
         if (INS_OperandIsReg(ins,0)) {
             // First register in a multiply instruction is dest reg
             REG dest_reg = INS_OperandReg(ins,0);
+	    UINT64 ins_type = int_mul;
             if (dest_reg) {
                 // TODO: create an Xmm predictValue function
                 if (REG_is_xmm(dest_reg)) {
@@ -311,7 +320,7 @@ void Instruction(INS ins, void *v)
                 }
                 else {
                     INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
-                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
+                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_UINT64, ins_type, IARG_END);
                 }
             }
         }
@@ -323,6 +332,7 @@ void Instruction(INS ins, void *v)
         if (INS_OperandIsReg(ins,0)) {
             // First register in a multiply instruction is dest reg
             REG dest_reg = INS_OperandReg(ins,0);
+	    UINT64 ins_type = fp_add;
             if (dest_reg) {
                 // TODO: create an Xmm predictValue function
                 if (REG_is_xmm(dest_reg)) {
@@ -330,7 +340,7 @@ void Instruction(INS ins, void *v)
                 }
                 else {
                     INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
-                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
+                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_UINT64, ins_type, IARG_END);
                 }
             }
         }
@@ -342,6 +352,7 @@ void Instruction(INS ins, void *v)
         // *out << INS_Disassemble(ins) <<endl;
         // First register in a multiply instruction is dest reg
         REG dest_reg = INS_OperandReg(ins,0);
+	UINT64 ins_type = fp_sub;
         if (dest_reg) {
             // TODO: create an Xmm predictValue function
             if (REG_is_xmm(dest_reg)) {
@@ -349,7 +360,7 @@ void Instruction(INS ins, void *v)
             }
             else {
                 INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
-                               IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
+                               IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_UINT64, ins_type, IARG_END);
             }
         }
     }
