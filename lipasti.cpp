@@ -48,10 +48,18 @@ struct ct_entry {
 
 ct_entry* ClassTable;
 
+struct val_hist_entry {
+    bool is_xmm;
+    union {
+        ADDRINT non_xmm_entry;
+        PIN_REGISTER xmm_entry;
+   } u;
+};
+
 struct vpt_entry {
     bool valid;
     ADDRINT addr;
-    vector<ADDRINT> val_hist;
+    vector<val_hist_entry> val_hist;
 };
 
 vpt_entry* VPTable;
@@ -105,14 +113,14 @@ bool in_tables(ADDRINT ins_ptr) {
     return true;
 }
 
-ADDRINT prediction(ADDRINT ins_ptr) {
+ADDRINT non_xmm_prediction(ADDRINT ins_ptr, bool is_xmm) {
     // index into ct and vpt
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
     if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter < 4) {
         return 0;
     } else {
-        return VPTable[vpt_index].val_hist.back();
+        return VPTable[vpt_index].val_hist.back().u.non_xmm_entry;
     }
 }
 
@@ -130,6 +138,7 @@ void insert(ADDRINT ins_ptr) {
 }
 
 void update(ADDRINT ins_ptr, ADDRINT actual_val) {
+    val_hist_entry actual_entry = val_hist_entry{false, actual_val};
 
     // need to iterate through vector and see if actual value contained
     UINT64 ct_index = ins_ptr & ct_mask;
@@ -137,7 +146,7 @@ void update(ADDRINT ins_ptr, ADDRINT actual_val) {
 
     ADDRINT pred_val;
     if (VPTable[vpt_index].val_hist.size() > 0) {
-        pred_val = VPTable[vpt_index].val_hist.back();
+        pred_val = VPTable[vpt_index].val_hist.back().u.non_xmm_entry;
     }
     else {
         pred_val = actual_val - 1;
@@ -154,25 +163,40 @@ void update(ADDRINT ins_ptr, ADDRINT actual_val) {
     bool in_vpt = false;
 
     for (long int i = 0; i < (long int)VPTable[vpt_index].val_hist.size(); i++) {
-        if (actual_val == VPTable[vpt_index].val_hist[i]) {
+        if (!VPTable[vpt_index].val_hist[i].is_xmm && actual_val == VPTable[vpt_index].val_hist[i].u.non_xmm_entry) {
             in_vpt = true;
             VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin()+i);
-            VPTable[vpt_index].val_hist.push_back(actual_val);
+            VPTable[vpt_index].val_hist.push_back(actual_entry);
         }
     }
     if (!in_vpt && VPTable[vpt_index].val_hist.size() < (UINT64)vpt_depth) {
-        VPTable[vpt_index].val_hist.push_back(actual_val);
+        VPTable[vpt_index].val_hist.push_back(actual_entry);
     } else if (!in_vpt && VPTable[vpt_index].val_hist.size() >= (UINT64)vpt_depth) {
         // delete the front of the vector, then push_back
         VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin());
-        VPTable[vpt_index].val_hist.push_back(actual_val);
+        VPTable[vpt_index].val_hist.push_back(actual_entry);
     }
 }
 
 void predictValNonXmm(ADDRINT ins_ptr, ADDRINT actual_value) {
     count_seen++;
     if (in_tables(ins_ptr)) {
-        if(prediction(ins_ptr) == actual_value) {
+        if(non_xmm_prediction(ins_ptr, false) == actual_value) {
+            count_correct++;
+        }
+        update(ins_ptr, actual_value);
+    }
+    else {
+        insert(ins_ptr);
+        update(ins_ptr, actual_value);
+    }
+
+    if (count_seen == KnobInstLimit.Value()) {
+        PrintResults(true);
+        PIN_ExitProcess(EXIT_SUCCESS);
+    }
+}
+
             count_correct++;
         }
         update(ins_ptr, actual_value);
@@ -275,10 +299,9 @@ void Instruction(INS ins, void *v)
     */
     if (is_int_mul(ins)) {
         // Second operand is our dest reg; if it isn't we don't yet support it
-	// *out << INS_Disassemble(ins) <<endl;
-	count_int_mul_seen++;
         assert(INS_OperandIsReg(ins,0));
-	if (INS_OperandIsReg(ins,0)) {
+        count_int_mul_seen++;
+        if (INS_OperandIsReg(ins,0)) {
             // First register in a multiply instruction is dest reg
             REG dest_reg = INS_OperandReg(ins,0);
             if (dest_reg) {
@@ -293,12 +316,11 @@ void Instruction(INS ins, void *v)
             }
         }
     }
-    //if (is_fp_add(ins))
     if (is_fp_add(ins)) {
         // Second operand is our dest reg; if it isn't we don't yet support it
+        assert(INS_OperandIsReg(ins,0));
         count_fp_add_seen++;
-	assert(INS_OperandIsReg(ins,0));
-	if (INS_OperandIsReg(ins,0)) {
+        if (INS_OperandIsReg(ins,0)) {
             // First register in a multiply instruction is dest reg
             REG dest_reg = INS_OperandReg(ins,0);
             if (dest_reg) {
@@ -313,28 +335,23 @@ void Instruction(INS ins, void *v)
             }
         }
     }
-    //if (is_fp_sub(ins))
     if (is_fp_sub(ins)) {
         // Second operand is our dest reg; if it isn't we don't yet support it
         assert(INS_OperandIsReg(ins,0));
-	count_fp_sub_seen++;
-	// *out << INS_Disassemble(ins) <<endl;
-	if (INS_OperandIsReg(ins,0)) {
-            // First register in a multiply instruction is dest reg
-            REG dest_reg = INS_OperandReg(ins,0);
-            if (dest_reg) {
-                // TODO: create an Xmm predictValue function
-                if (REG_is_xmm(dest_reg)) {
+        count_fp_sub_seen++;
+        // *out << INS_Disassemble(ins) <<endl;
+        // First register in a multiply instruction is dest reg
+        REG dest_reg = INS_OperandReg(ins,0);
+        if (dest_reg) {
+            // TODO: create an Xmm predictValue function
+            if (REG_is_xmm(dest_reg)) {
 
-                }
-                else {
-                    INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
-                                   IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
-                }
             }
-        } else {
-	    *out << "ASSERT FAILED" << endl;
-	}
+            else {
+                INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
+                               IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_END);
+            }
+        }
     }
     //if (is_fp_mul(ins))
     //if (is_fp_div(ins))
