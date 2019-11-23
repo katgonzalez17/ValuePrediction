@@ -23,28 +23,31 @@ KNOB<UINT64> KnobInstLimit(KNOB_MODE_WRITEONCE,        "pintool",
                             "inst_limit", "0", "Limit of instructions analyzed");
 // GLOBALS
 
-enum InsType {unsupported_ins, fp_add, fp_sub, fp_mul, fp_div, int_mul, int_div};
+enum InsType {unsupported_ins, fp_add, fp_sub, fp_mul, fp_div, int_mul, int_div, load};
 
-UINT64 count_correct;
-UINT64 count_seen;
+UINT64 count_correct = 0;
+UINT64 count_seen = 0;
 
-UINT64 count_fp_add_corr;
-UINT64 count_fp_add_seen;
+UINT64 count_fp_add_corr = 0;
+UINT64 count_fp_add_seen = 0;
 
-UINT64 count_fp_sub_corr;
-UINT64 count_fp_sub_seen;
+UINT64 count_fp_sub_corr = 0;
+UINT64 count_fp_sub_seen = 0;
 
-UINT64 count_fp_mul_corr;
-UINT64 count_fp_mul_seen;
+UINT64 count_fp_mul_corr = 0;
+UINT64 count_fp_mul_seen = 0;
 
-UINT64 count_fp_div_corr;
-UINT64 count_fp_div_seen;
+UINT64 count_fp_div_corr = 0;
+UINT64 count_fp_div_seen = 0;
 
-UINT64 count_int_mul_corr;
-UINT64 count_int_mul_seen;
+UINT64 count_int_mul_corr = 0;
+UINT64 count_int_mul_seen = 0;
 
-UINT64 count_int_div_corr;
-UINT64 count_int_div_seen;
+UINT64 count_int_div_corr = 0;
+UINT64 count_int_div_seen = 0;
+
+UINT64 count_load_corr = 0;
+UINT64 count_load_seen = 0;
 
 // STRUCTS
 int vpt_depth = 1;
@@ -130,6 +133,9 @@ void PrintResults(bool limit_reached) {
 
     *out << "Count int_div Seen: " << count_int_div_seen << endl;
     *out << "Count int_div Correct: " << count_int_div_corr << endl;
+
+    *out << "Count load Seen: " << count_load_seen << endl;
+    *out << "Count load Correct: " << count_load_corr << endl;
 }
 
 bool in_tables(ADDRINT ins_ptr) {
@@ -365,11 +371,13 @@ InsType get_ins_type(INS ins) {
     if (is_int_div(ins)) {
         return int_div;
     }
+    if (INS_IsMemoryRead(ins)) {
+        return load;
+    }
     return unsupported_ins;
 }
 
 void update_seen_count(UINT64 ins_type) {
-    count_seen++;
     switch(ins_type) {
         case fp_add  : count_fp_add_seen++; break;
         case fp_sub  : count_fp_sub_seen++; break;
@@ -377,10 +385,11 @@ void update_seen_count(UINT64 ins_type) {
         case fp_div  : count_fp_div_seen++; break;
         case int_mul : count_int_mul_seen++; break;
         case int_div : count_int_div_seen++; break;
+        case load : count_load_seen++; break;
     }
 }
 
-void predictValNonXmm(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type) {
+void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type) {
     update_seen_count(ins_type);
     if (in_tables(ins_ptr)) {
         if(non_xmm_prediction(ins_ptr) == actual_value) {
@@ -392,6 +401,7 @@ void predictValNonXmm(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type) {
                 case fp_div  : count_fp_div_corr++; break;
                 case int_mul : count_int_mul_corr++; break;
                 case int_div : count_int_div_corr++; break;
+                case load : count_load_corr++; break;
             }
         }
         update(ins_ptr, actual_value);
@@ -407,7 +417,7 @@ void predictValNonXmm(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type) {
     }
 }
 
-void predictValXmm(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, UINT64 ins_type) {
+void predictValLargeReg(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, UINT64 ins_type) {
     update_seen_count(ins_type);
     PIN_REGISTER actual_value;
     PIN_GetContextRegval(context, dest_reg, reinterpret_cast<UINT8*>(&actual_value));
@@ -422,6 +432,7 @@ void predictValXmm(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, UINT64
                 case fp_div  : count_fp_div_corr++; break;
                 case int_mul : count_int_mul_corr++; break;
                 case int_div : count_int_div_corr++; break;
+                case load : count_load_corr++; break;
             }
         }
         update(ins_ptr, actual_value);
@@ -443,14 +454,14 @@ static INT32 Usage() {
     return -1;
 }
 
-void Instruction(INS ins, void *v)
-{
-    // TODO: we need a way to get the destination register
-    /*if (INS_IsMemoryRead(ins)) {
-        INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) PredictVal,
-                       IARG_INST_PTR, IARG_REG_VALUE,  IARG_END);
-    }
-    */
+void docount() {
+    count_seen++;
+}
+
+void Instruction(INS ins, void *v) {
+    // Increment count seen
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) docount, IARG_END);
+
     InsType ins_type = get_ins_type(ins);
 
     if (ins_type != unsupported_ins) {
@@ -463,12 +474,13 @@ void Instruction(INS ins, void *v)
         // First register in a multiply instruction is dest reg
         REG dest_reg = INS_OperandReg(ins,0);
         assert(dest_reg);
-        if (REG_is_xmm(dest_reg)) {
-            INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValXmm,
+        // The intstruction uses larger registers
+        if (REG_is_xmm(dest_reg) || REG_is_st(dest_reg)) {
+            INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValLargeReg,
                            IARG_INST_PTR, IARG_CONST_CONTEXT, IARG_UINT64, dest_reg, IARG_UINT64, ins_type, IARG_END);
         }
         else {
-            INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNonXmm,
+            INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNormalReg,
                            IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_UINT64, ins_type, IARG_END);
         }
     }
