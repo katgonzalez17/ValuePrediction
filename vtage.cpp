@@ -484,6 +484,11 @@ void docount() {
     count_seen++;
 }
 
+void updateBranchHistory(INT32 taken) {
+    history <<= 1;
+    history |= taken;
+}
+
 void Instruction(INS ins, void *v) {
     // Increment count seen
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) docount, IARG_END);
@@ -508,6 +513,40 @@ void Instruction(INS ins, void *v) {
         else {
             INS_InsertCall(ins, IPOINT_AFTER, (AFUNPTR) predictValNormalReg,
                            IARG_INST_PTR, IARG_REG_VALUE, dest_reg, IARG_UINT64, ins_type, IARG_END);
+        }
+    }
+
+    // Keep track of branch history
+    if( INS_IsRet(ins) )
+    {
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) updateBranchHistory,
+            IARG_BRANCH_TAKEN,  IARG_END);
+    }
+    else if( INS_IsSyscall(ins) )
+    {
+        INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) updateBranchHistory,
+            IARG_BRANCH_TAKEN,  IARG_END);
+    }
+    else if (INS_IsDirectBranch(ins) or INS_IsDirectCall(ins))
+    {
+        if( INS_IsCall(ins) ) {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) updateBranchHistory,
+                IARG_BRANCH_TAKEN,  IARG_END);
+        }
+        else {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) updateBranchHistory,
+                IARG_BRANCH_TAKEN,  IARG_END);
+        }
+    }
+    else if( INS_IsBranch(ins) or INS_IsCall(ins) ) //"and INS_IsDirectCall/Branch(ins)" would be redundant
+    {
+        if( INS_IsCall(ins) ) {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) updateBranchHistory,
+                IARG_BRANCH_TAKEN,  IARG_END);
+    }
+        else {
+            INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR) updateBranchHistory,
+                IARG_BRANCH_TAKEN,  IARG_END);
         }
     }
 }
