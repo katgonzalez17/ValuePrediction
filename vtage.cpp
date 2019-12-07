@@ -65,6 +65,17 @@ struct lvp_entry {
     UINT8 counter;
 };
 
+lvp_entry* lvp_table;
+
+void lvp_table_init() {
+    lvp_table = new lvp_entry[lvp_size];
+    for (int table_entry = 0; table_entry < lvp_size; table_entry++) {
+        lvp_table[table_entry].is_large_value = false;
+        lvp_table[table_entry].u.non_large_value = 0;
+        lvp_table[table_entry].counter = 0;
+    }
+}
+
 const int vt_table_size = 1024;
 const int num_vt_tables = 6;
 
@@ -205,6 +216,18 @@ void update_seen_count(UINT64 ins_type) {
         case load : count_load_seen++; break;
     }
 }
+void add_correct(UINT64 ins_type) {
+    count_correct++;
+    switch(ins_type) {
+        case fp_add  : count_fp_add_corr++; break;
+        case fp_sub  : count_fp_sub_corr++; break;
+        case fp_mul  : count_fp_mul_corr++; break;
+        case fp_div  : count_fp_div_corr++; break;
+        case int_mul : count_int_mul_corr++; break;
+        case int_div : count_int_div_corr++; break;
+        case load : count_load_corr++; break;
+    }
+}
 
 void PrintResults(bool limit_reached) {
     string output_file = KnobOutputFile.Value();
@@ -268,6 +291,20 @@ void update_vt_c_and_u(int table_index, size_t vt_index, PredictionStatus predic
     }
 }
 
+void update_lvp_c(ADDRINT ins_ptr, PredictionStatus prediction_status) {
+    size_t lvp_index = (std::hash<unsigned long long>{}(ins_ptr) % lvp_size);
+    if (prediction_status == correct) {
+        if (lvp_table[lvp_index].counter < counter_max) {
+            lvp_table[lvp_index].counter++;
+        }
+    }
+    else {
+        if (lvp_table[lvp_index].counter > 0) {
+            lvp_table[lvp_index].counter--;
+        }
+    }
+}
+
 size_t compute_vt_index (ADDRINT ins_ptr, int table_index) {
     // Compute index into this vt_table
     unsigned long long history_bits = getRelevantHistoryBits(table_index);
@@ -313,6 +350,7 @@ void reset_upper_vt_usefulness(ADDRINT ins_ptr, int provider_index) {
 
 void handle_vt_misprediction(ADDRINT ins_ptr, int table_index, size_t vt_index, ADDRINT actual_value) {
     if (vt_tables[table_index][vt_index].counter == 0) {
+        vt_tables[table_index][vt_index].is_large_value = false;
         vt_tables[table_index][vt_index].u.non_large_value = actual_value;
     }
     int new_provider_index = find_upper_non_useful_vt(ins_ptr, table_index);
@@ -332,8 +370,36 @@ void handle_vt_misprediction(ADDRINT ins_ptr, int table_index, size_t vt_index, 
     }
 }
 
+void handle_lvp_misprediction(ADDRINT ins_ptr, ADDRINT actual_value) {
+    size_t lvp_index = (std::hash<unsigned long long>{}(ins_ptr) % lvp_size);
+    if (lvp_table[lvp_index].counter == 0) {
+        lvp_table[lvp_index].is_large_value = false;
+        lvp_table[lvp_index].u.non_large_value = actual_value;
+    }
+    int new_provider_index = find_upper_non_useful_vt(ins_ptr, -1);
+    // Didn't find non-useful entry
+    if (new_provider_index == -1) {
+        // Reset the usefulness counter of all matching entries in the upper VT's
+        reset_upper_vt_usefulness(ins_ptr, -1);
+    }
+    // Found an upper VT for which ins_ptr hashes to a non-useful entry
+    else {
+        size_t new_vt_index = compute_vt_index(ins_ptr, new_provider_index);
+        vt_tables[new_provider_index][new_vt_index].is_large_value = false;
+        vt_tables[new_provider_index][new_vt_index].u.non_large_value = actual_value;
+        vt_tables[new_provider_index][new_vt_index].counter = 0;
+        vt_tables[new_provider_index][new_vt_index].tag = ins_ptr;
+        vt_tables[new_provider_index][new_vt_index].useful = 0;
+    }
+}
+
 ADDRINT non_large_vt_prediction(ADDRINT ins_ptr, int table_index, size_t vt_index) {
     return vt_tables[table_index][vt_index].u.non_large_value;
+}
+
+ADDRINT non_large_lvp_prediction(ADDRINT ins_ptr) {
+    size_t lvp_index = (std::hash<unsigned long long>{}(ins_ptr) % lvp_size);
+    return lvp_table[lvp_index].u.non_large_value;
 }
 
 void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type) {
@@ -355,16 +421,7 @@ void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type)
     if (found_entry) {
         // Use the `table_index` vt_table to predict
         if (non_large_vt_prediction(ins_ptr, table_index, vt_index) == actual_value) {
-            count_correct++;
-            switch(ins_type) {
-                case fp_add  : count_fp_add_corr++; break;
-                case fp_sub  : count_fp_sub_corr++; break;
-                case fp_mul  : count_fp_mul_corr++; break;
-                case fp_div  : count_fp_div_corr++; break;
-                case int_mul : count_int_mul_corr++; break;
-                case int_div : count_int_div_corr++; break;
-                case load : count_load_corr++; break;
-            }
+            add_correct(ins_type);
             update_vt_c_and_u(table_index, vt_index, correct);
         }
         else {
@@ -374,7 +431,14 @@ void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type)
     }
     else {
         // Use the base predictor
-        // TODO
+        if (non_large_lvp_prediction(ins_ptr) == actual_value) {
+            add_correct(ins_type);
+            update_lvp_c(ins_ptr, correct);
+        }
+        else {
+            update_lvp_c(ins_ptr, incorrect);
+            handle_lvp_misprediction(ins_ptr, actual_value);
+        }
     }
 
     if (count_seen == KnobInstLimit.Value()) {
@@ -397,8 +461,36 @@ bool operator != (const PIN_REGISTER &a, const PIN_REGISTER &b) {
     return !(a==b);
 }
 
+PIN_REGISTER large_lvp_prediction(ADDRINT ins_ptr) {
+    size_t lvp_index = (std::hash<unsigned long long>{}(ins_ptr) % lvp_size);
+    return lvp_table[lvp_index].u.large_value;
+}
+
 PIN_REGISTER large_vt_prediction(ADDRINT ins_ptr, int table_index, size_t vt_index) {
     return vt_tables[table_index][vt_index].u.large_value;
+}
+
+void handle_lvp_misprediction_large(ADDRINT ins_ptr, PIN_REGISTER actual_value) {
+    size_t lvp_index = (std::hash<unsigned long long>{}(ins_ptr) % lvp_size);
+    if (lvp_table[lvp_index].counter == 0) {
+        lvp_table[lvp_index].is_large_value = true;
+        lvp_table[lvp_index].u.large_value = actual_value;
+    }
+    int new_provider_index = find_upper_non_useful_vt(ins_ptr, -1);
+    // Didn't find non-useful entry
+    if (new_provider_index == -1) {
+        // Reset the usefulness counter of all matching entries in the upper VT's
+        reset_upper_vt_usefulness(ins_ptr, -1);
+    }
+    // Found an upper VT for which ins_ptr hashes to a non-useful entry
+    else {
+        size_t new_vt_index = compute_vt_index(ins_ptr, new_provider_index);
+        vt_tables[new_provider_index][new_vt_index].is_large_value = true;
+        vt_tables[new_provider_index][new_vt_index].u.large_value = actual_value;
+        vt_tables[new_provider_index][new_vt_index].counter = 0;
+        vt_tables[new_provider_index][new_vt_index].tag = ins_ptr;
+        vt_tables[new_provider_index][new_vt_index].useful = 0;
+    }
 }
 
 void handle_vt_misprediction_large(ADDRINT ins_ptr, int table_index, size_t vt_index, PIN_REGISTER actual_value) {
@@ -445,16 +537,7 @@ void predictValLargeReg(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, U
     if (found_entry) {
         // Use the `table_index` vt_table to predict
         if (large_vt_prediction(ins_ptr, table_index, vt_index) == actual_value) {
-            count_correct++;
-            switch(ins_type) {
-                case fp_add  : count_fp_add_corr++; break;
-                case fp_sub  : count_fp_sub_corr++; break;
-                case fp_mul  : count_fp_mul_corr++; break;
-                case fp_div  : count_fp_div_corr++; break;
-                case int_mul : count_int_mul_corr++; break;
-                case int_div : count_int_div_corr++; break;
-                case load : count_load_corr++; break;
-            }
+            add_correct(ins_type);
             update_vt_c_and_u(table_index, vt_index, correct);
         }
         else {
@@ -464,7 +547,14 @@ void predictValLargeReg(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, U
     }
     else {
         // Use the base predictor
-        // TODO
+        if (large_lvp_prediction(ins_ptr) == actual_value) {
+            add_correct(ins_type);
+            update_lvp_c(ins_ptr, correct);
+        }
+        else {
+            update_lvp_c(ins_ptr, incorrect);
+            handle_lvp_misprediction_large(ins_ptr, actual_value);
+        }
     }
 
     if (count_seen == KnobInstLimit.Value()) {
@@ -562,6 +652,7 @@ int main(int argc, char *argv[]) {
         return Usage();
     }
     vt_tables_init();
+    lvp_table_init();
     INS_AddInstrumentFunction(Instruction, 0);
     PIN_AddFiniFunction(fini, 0);
 
