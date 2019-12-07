@@ -1,0 +1,34 @@
+####################
+#
+# Use perf to measure performance of a command with no arguments
+#
+####################
+# script that runs the experiment
+executable = run-pin.bash
+
+# command-line arguments to the script
+arguments = lipasti.so $(Process)
+
+# no standard input needed this time
+# input = measure.in
+
+# files in which to save standard output and standard error
+# measure.out
+output = measure.out
+error = measure.err
+
+# file for condor’s statistics about the job’s execution
+log = measure.log
+
+# need exclusive use of execution host with 96 logical processors OR exclude for pin runs
+# request_cpus = 1
+
+should_transfer_files = YES
+when_to_transfer_output = ON_EXIT
+transfer_input_files = obj-intel64/lipasti.so,pin.log,libquantum.$(Process).tool.out, dealII.$(Process).tool.out,HMMER.$(Process).tool.out
+transfer_output_files = pin.log, tool.out, libquantum.$(Process).tool.out, dealII.$(Process).tool.out,HMMER_$(Process).tool.out
+# getenv = true
+# append_files = measure.out,tool.out
+
+# submit a job with the parameters given above
+queue 24

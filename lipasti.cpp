@@ -21,6 +21,21 @@ KNOB<BOOL>   KnobPid(KNOB_MODE_WRITEONCE,                "pintool",
 
 KNOB<UINT64> KnobInstLimit(KNOB_MODE_WRITEONCE,        "pintool",
                             "inst_limit", "0", "Limit of instructions analyzed");
+
+// For toggling VPT
+// For toggling the BTB, HHRT, and PT sizes
+KNOB<UINT64> KnobVPTSize(KNOB_MODE_WRITEONCE,        "pintool",
+                            "VPT_size", "4096", "Size of the VPT");
+
+KNOB<UINT64> KnobVPTDepth(KNOB_MODE_WRITEONCE,        "pintool",
+                            "VTP_depth", "1", "Depth of VPT history");
+
+KNOB<UINT64> KnobCTSize(KNOB_MODE_WRITEONCE,        "pintool",
+                            "CT_size", "1024", "Size of the CT");
+
+KNOB<UINT64> KnobCounterMax(KNOB_MODE_WRITEONCE,        "pintool",
+                            "counter_max", "7", "Counter maximum in bits (7 gives 3bit counter resolution, 3 gives 2bit)");
+
 // GLOBALS
 
 enum InsType {unsupported_ins, fp_add, fp_sub, fp_mul, fp_div, int_mul, int_div, load};
@@ -50,9 +65,10 @@ UINT64 count_load_corr = 0;
 UINT64 count_load_seen = 0;
 
 // STRUCTS
-int vpt_depth = 1;
-int vpt_size = 1024;
-int ct_size = 1024;
+UINT64 vpt_depth;
+UINT64 vpt_size;
+UINT64 ct_size;
+UINT64 counter_max;
 
 UINT64 ct_mask;
 UINT64 vpt_mask;
@@ -83,7 +99,7 @@ vpt_entry* VPTable;
 
 void CT_init()
 {
-    for(int i = 0; i < ct_size; i++) {
+    for(UINT64 i = 0; i < ct_size; i++) {
         ClassTable[i].valid = false;
         ClassTable[i].addr = 0;
         ClassTable[i].counter = 0;
@@ -92,7 +108,7 @@ void CT_init()
 
 void VPT_init()
 {
-    for(int i = 0; i < vpt_size; i++) {
+    for(UINT64 i = 0; i < vpt_size; i++) {
         VPTable[i].valid = false;
         VPTable[i].addr = 0;
     }
@@ -156,7 +172,7 @@ ADDRINT non_xmm_prediction(ADDRINT ins_ptr) {
     // index into ct and vpt
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
-    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter < 4) {
+    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter == 0) {
         return 0;
     } else {
         return VPTable[vpt_index].val_hist.back().u.non_xmm_entry;
@@ -167,7 +183,7 @@ PIN_REGISTER xmm_prediction(ADDRINT ins_ptr) {
     // index into ct and vpt
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
-    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter < 4) {
+    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter == 0) {
         return (PIN_REGISTER{0});
     } else {
         return VPTable[vpt_index].val_hist.back().u.xmm_entry;
@@ -220,7 +236,7 @@ void update(ADDRINT ins_ptr, PIN_REGISTER actual_val) {
     if (ClassTable[ct_index].counter > 0 && pred_val != actual_val) {
         ClassTable[ct_index].counter--;
     }
-    if (ClassTable[ct_index].counter < 7 && pred_val == actual_val) {
+    if (ClassTable[ct_index].counter < counter_max && pred_val == actual_val) {
         ClassTable[ct_index].counter++;
     }
 
@@ -256,11 +272,10 @@ void update(ADDRINT ins_ptr, ADDRINT actual_val) {
         pred_val = actual_val - 1;
     }
 
-    // 3 bit counter resolution
     if (ClassTable[ct_index].counter > 0 && pred_val != actual_val) {
         ClassTable[ct_index].counter--;
     }
-    if (ClassTable[ct_index].counter < 7 && pred_val == actual_val) {
+    if (ClassTable[ct_index].counter < counter_max && pred_val == actual_val) {
         ClassTable[ct_index].counter++;
     }
 
@@ -467,7 +482,6 @@ void Instruction(INS ins, void *v) {
     if (ins_type != unsupported_ins) {
         // Second operand is our dest reg; if it isn't we don't yet support it
         if (!INS_OperandIsReg(ins,0)) {
-            *out << INS_Disassemble(ins) << endl;
             return;
         }
 
@@ -496,6 +510,10 @@ int main(int argc, char *argv[]) {
     if( PIN_Init(argc,argv) ) {
         return Usage();
     }
+    vpt_size = KnobVPTSize.Value();
+    vpt_depth = KnobVPTDepth.Value();
+    ct_size = KnobCTSize.Value();
+    counter_max = KnobCounterMax.Value();
     ct_mask = ct_size - 1;
     vpt_mask = vpt_size - 1;
     ClassTable = new ct_entry[ct_size];
