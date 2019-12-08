@@ -28,7 +28,7 @@ KNOB<UINT64> KnobVPTSize(KNOB_MODE_WRITEONCE,        "pintool",
                             "VPT_size", "4096", "Size of the VPT");
 
 KNOB<UINT64> KnobVPTDepth(KNOB_MODE_WRITEONCE,        "pintool",
-                            "VTP_depth", "1", "Depth of VPT history");
+                            "VPT_depth", "1", "Depth of VPT history");
 
 KNOB<UINT64> KnobCTSize(KNOB_MODE_WRITEONCE,        "pintool",
                             "CT_size", "1024", "Size of the CT");
@@ -42,6 +42,9 @@ enum InsType {unsupported_ins, fp_add, fp_sub, fp_mul, fp_div, int_mul, int_div,
 
 UINT64 count_correct = 0;
 UINT64 count_seen = 0;
+UINT64 count_pos_pos = 0;
+UINT64 count_neg_pos = 0;
+UINT64 count_incorrect_predictions = 0;
 
 UINT64 count_fp_add_corr = 0;
 UINT64 count_fp_add_seen = 0;
@@ -128,30 +131,33 @@ void PrintResults(bool limit_reached) {
     else {
         *out << "Reason: fini\n";
     }
-    *out << "Count Seen: " << count_seen << endl;
-    *out << "Count Correct: " << count_correct << endl;
-    *out << "-------------------------------------" << endl;
+    *out << count_seen << endl;
+    *out << count_correct << endl;
 
-    *out << "Count fp_add Seen: " << count_fp_add_seen << endl;
-    *out << "Count fp_add Correct: " << count_fp_add_corr << endl;
+    *out << count_fp_add_seen << endl;
+    *out << count_fp_add_corr << endl;
 
-    *out << "Count fp_sub Seen: " << count_fp_sub_seen << endl;
-    *out << "Count fp_sub Correct: " << count_fp_sub_corr << endl;
+    *out << count_fp_sub_seen << endl;
+    *out << count_fp_sub_corr << endl;
 
-    *out << "Count fp_mul Seen: " << count_fp_mul_seen << endl;
-    *out << "Count fp_mul Correct: " << count_fp_mul_corr << endl;
+    *out << count_fp_mul_seen << endl;
+    *out << count_fp_mul_corr << endl;
 
-    *out << "Count fp_div Seen: " << count_fp_div_seen << endl;
-    *out << "Count fp_div Correct: " << count_fp_div_corr << endl;
+    *out << count_fp_div_seen << endl;
+    *out << count_fp_div_corr << endl;
 
-    *out << "Count int_mul Seen: " << count_int_mul_seen << endl;
-    *out << "Count int_mul Correct: " << count_int_mul_corr << endl;
+    *out << count_int_mul_seen << endl;
+    *out << count_int_mul_corr << endl;
 
-    *out << "Count int_div Seen: " << count_int_div_seen << endl;
-    *out << "Count int_div Correct: " << count_int_div_corr << endl;
+    *out << count_int_div_seen << endl;
+    *out << count_int_div_corr << endl;
 
-    *out << "Count load Seen: " << count_load_seen << endl;
-    *out << "Count load Correct: " << count_load_corr << endl;
+    *out << count_load_seen << endl;
+    *out << count_load_corr << endl;
+
+    *out << count_pos_pos << endl;
+    *out << count_neg_pos << endl;
+    *out << count_incorrect_predictions << endl;
 }
 
 bool in_tables(ADDRINT ins_ptr) {
@@ -173,9 +179,18 @@ ADDRINT non_xmm_prediction(ADDRINT ins_ptr) {
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
     if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter == 0) {
-        return 0;
+        return VPTable[vpt_index].val_hist.back().u.non_xmm_entry;
     } else {
         return VPTable[vpt_index].val_hist.back().u.non_xmm_entry;
+    }
+}
+
+bool is_predictable(ADDRINT ins_ptr){
+    UINT64 ct_index = ins_ptr & ct_mask;
+    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter == 0) {
+	return false;
+    } else {
+	return true;
     }
 }
 
@@ -184,7 +199,7 @@ PIN_REGISTER xmm_prediction(ADDRINT ins_ptr) {
     UINT64 ct_index = ins_ptr & ct_mask;
     UINT64 vpt_index = ins_ptr & vpt_mask;
     if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter == 0) {
-        return (PIN_REGISTER{0});
+        return VPTable[vpt_index].val_hist.back().u.xmm_entry;
     } else {
         return VPTable[vpt_index].val_hist.back().u.xmm_entry;
     }
@@ -418,7 +433,16 @@ void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type)
                 case int_div : count_int_div_corr++; break;
                 case load : count_load_corr++; break;
             }
+	    if(is_predictable(ins_ptr)) {
+		count_pos_pos++;
+	    }
         }
+        else {
+	    count_incorrect_predictions++;
+    	    if (!is_predictable(ins_ptr)) {
+    		count_neg_pos++;
+	    }
+    	}
         update(ins_ptr, actual_value);
     }
     else {
@@ -449,7 +473,16 @@ void predictValLargeReg(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, U
                 case int_div : count_int_div_corr++; break;
                 case load : count_load_corr++; break;
             }
+	    if(is_predictable(ins_ptr)) {
+		count_pos_pos++;
+	    }
         }
+	else {
+	    count_incorrect_predictions++;
+	    if (!is_predictable(ins_ptr)) {
+	        count_neg_pos++;
+	    }
+	}
         update(ins_ptr, actual_value);
     }
     else {
