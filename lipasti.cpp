@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include "pin.H"
 #include <vector>
+#include <algorithm>
 
 using std::vector;
 using std::string;
@@ -45,6 +46,7 @@ UINT64 count_seen = 0;
 UINT64 count_pos_pos = 0;
 UINT64 count_neg_pos = 0;
 UINT64 count_incorrect_predictions = 0;
+UINT64 perfect_history_predictions = 0;
 
 UINT64 count_fp_add_corr = 0;
 UINT64 count_fp_add_seen = 0;
@@ -158,6 +160,7 @@ void PrintResults(bool limit_reached) {
     *out << count_pos_pos << endl;
     *out << count_neg_pos << endl;
     *out << count_incorrect_predictions << endl;
+    *out << perfect_history_predictions << endl;
 }
 
 bool in_tables(ADDRINT ins_ptr) {
@@ -187,10 +190,11 @@ ADDRINT non_xmm_prediction(ADDRINT ins_ptr) {
 
 bool is_predictable(ADDRINT ins_ptr){
     UINT64 ct_index = ins_ptr & ct_mask;
-    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter == 0) {
-	return false;
+    if (!ClassTable[ct_index].valid || ClassTable[ct_index].counter == 0
+        || (counter_max > 1 && ClassTable[ct_index].counter == 1)) {
+        return false;
     } else {
-	return true;
+        return true;
     }
 }
 
@@ -232,6 +236,25 @@ bool operator != (const PIN_REGISTER &a, const PIN_REGISTER &b) {
     return !(a==b);
 }
 
+bool should_replace(UINT8 counter) {
+    if (counter_max == 1) {
+        if (counter == 1) {
+            return false;
+        }
+    }
+    else if (counter_max == 3) {
+        if (counter == 3) {
+            return false;
+        }
+    }
+    else if (counter_max == 7) {
+        if (counter >= 5) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void update(ADDRINT ins_ptr, PIN_REGISTER actual_val) {
     val_hist_entry actual_entry = val_hist_entry{true, {xmm_entry: actual_val}};
 
@@ -255,6 +278,10 @@ void update(ADDRINT ins_ptr, PIN_REGISTER actual_val) {
         ClassTable[ct_index].counter++;
     }
 
+    if (!should_replace(ClassTable[ct_index].counter)) {
+        return;
+    }
+
     bool in_vpt = false;
 
     for (long int i = 0; i < (long int)VPTable[vpt_index].val_hist.size(); i++) {
@@ -262,6 +289,7 @@ void update(ADDRINT ins_ptr, PIN_REGISTER actual_val) {
             in_vpt = true;
             VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin()+i);
             VPTable[vpt_index].val_hist.push_back(actual_entry);
+            break;
         }
     }
     if (!in_vpt && VPTable[vpt_index].val_hist.size() < (UINT64)vpt_depth) {
@@ -294,6 +322,10 @@ void update(ADDRINT ins_ptr, ADDRINT actual_val) {
         ClassTable[ct_index].counter++;
     }
 
+    if (!should_replace(ClassTable[ct_index].counter)) {
+        return;
+    }
+
     bool in_vpt = false;
 
     for (long int i = 0; i < (long int)VPTable[vpt_index].val_hist.size(); i++) {
@@ -301,6 +333,7 @@ void update(ADDRINT ins_ptr, ADDRINT actual_val) {
             in_vpt = true;
             VPTable[vpt_index].val_hist.erase(VPTable[vpt_index].val_hist.begin()+i);
             VPTable[vpt_index].val_hist.push_back(actual_entry);
+            break;
         }
     }
     if (!in_vpt && VPTable[vpt_index].val_hist.size() < (UINT64)vpt_depth) {
@@ -419,9 +452,22 @@ void update_seen_count(UINT64 ins_type) {
     }
 }
 
+void perfect_history_prediction(ADDRINT ins_ptr, ADDRINT actual_value) {
+    UINT64 vpt_index = ins_ptr & vpt_mask;
+
+    for (UINT64 i = 0; i < VPTable[vpt_index].val_hist.size(); i++) {
+        if (VPTable[vpt_index].val_hist[i].u.non_xmm_entry == actual_value) {
+            std::iter_swap(VPTable[vpt_index].val_hist.begin() + i, VPTable[vpt_index].val_hist.begin() + VPTable[vpt_index].val_hist.size() - 1);
+            perfect_history_predictions++;
+            return;
+        }
+    }
+}
+
 void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type) {
     update_seen_count(ins_type);
     if (in_tables(ins_ptr)) {
+        perfect_history_prediction(ins_ptr, actual_value);
         if(non_xmm_prediction(ins_ptr) == actual_value) {
             count_correct++;
             switch(ins_type) {
@@ -433,16 +479,16 @@ void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type)
                 case int_div : count_int_div_corr++; break;
                 case load : count_load_corr++; break;
             }
-	    if(is_predictable(ins_ptr)) {
-		count_pos_pos++;
-	    }
+            if(is_predictable(ins_ptr)) {
+                count_pos_pos++;
+            }
         }
         else {
-	    count_incorrect_predictions++;
-    	    if (!is_predictable(ins_ptr)) {
-    		count_neg_pos++;
-	    }
-    	}
+            count_incorrect_predictions++;
+            if (!is_predictable(ins_ptr)) {
+                count_neg_pos++;
+            }
+        }
         update(ins_ptr, actual_value);
     }
     else {
@@ -456,12 +502,25 @@ void predictValNormalReg(ADDRINT ins_ptr, ADDRINT actual_value, UINT64 ins_type)
     }
 }
 
+void perfect_history_prediction(ADDRINT ins_ptr, PIN_REGISTER actual_value) {
+    UINT64 vpt_index = ins_ptr & vpt_mask;
+
+    for (UINT64 i = 0; i < VPTable[vpt_index].val_hist.size(); i++) {
+        if (VPTable[vpt_index].val_hist[i].u.xmm_entry == actual_value) {
+            std::iter_swap(VPTable[vpt_index].val_hist.begin() + i, VPTable[vpt_index].val_hist.begin() + VPTable[vpt_index].val_hist.size() - 1);
+            perfect_history_predictions++;
+            return;
+        }
+    }
+}
+
 void predictValLargeReg(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, UINT64 ins_type) {
     update_seen_count(ins_type);
     PIN_REGISTER actual_value;
     PIN_GetContextRegval(context, dest_reg, reinterpret_cast<UINT8*>(&actual_value));
 
     if (in_tables(ins_ptr)) {
+        perfect_history_prediction(ins_ptr, actual_value);
         if(xmm_prediction(ins_ptr) == actual_value) {
             count_correct++;
             switch(ins_type) {
@@ -473,16 +532,16 @@ void predictValLargeReg(ADDRINT ins_ptr, const CONTEXT* context, REG dest_reg, U
                 case int_div : count_int_div_corr++; break;
                 case load : count_load_corr++; break;
             }
-	    if(is_predictable(ins_ptr)) {
-		count_pos_pos++;
-	    }
+            if(is_predictable(ins_ptr)) {
+                count_pos_pos++;
+            }
         }
-	else {
-	    count_incorrect_predictions++;
-	    if (!is_predictable(ins_ptr)) {
-	        count_neg_pos++;
-	    }
-	}
+        else {
+            count_incorrect_predictions++;
+            if (!is_predictable(ins_ptr)) {
+                count_neg_pos++;
+            }
+        }
         update(ins_ptr, actual_value);
     }
     else {

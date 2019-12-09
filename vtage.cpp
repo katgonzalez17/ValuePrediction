@@ -55,6 +55,7 @@ UINT64 history = 0;
 const int lvp_size = 8192;
 
 const int counter_max = 7; // 3 bit saturating counter
+const int forward_transition_probabilities[] = {1, 16, 16, 16, 16, 32, 32};
 
 struct lvp_entry {
     bool is_large_value;
@@ -241,30 +242,29 @@ void PrintResults(bool limit_reached) {
     else {
         *out << "Reason: fini\n";
     }
-    *out << "Count Seen: " << count_seen << endl;
-    *out << "Count Correct: " << count_correct << endl;
-    *out << "-------------------------------------" << endl;
+    *out << count_seen << endl;
+    *out << count_correct << endl;
 
-    *out << "Count fp_add Seen: " << count_fp_add_seen << endl;
-    *out << "Count fp_add Correct: " << count_fp_add_corr << endl;
+    *out << count_fp_add_seen << endl;
+    *out << count_fp_add_corr << endl;
 
-    *out << "Count fp_sub Seen: " << count_fp_sub_seen << endl;
-    *out << "Count fp_sub Correct: " << count_fp_sub_corr << endl;
+    *out << count_fp_sub_seen << endl;
+    *out << count_fp_sub_corr << endl;
 
-    *out << "Count fp_mul Seen: " << count_fp_mul_seen << endl;
-    *out << "Count fp_mul Correct: " << count_fp_mul_corr << endl;
+    *out << count_fp_mul_seen << endl;
+    *out << count_fp_mul_corr << endl;
 
-    *out << "Count fp_div Seen: " << count_fp_div_seen << endl;
-    *out << "Count fp_div Correct: " << count_fp_div_corr << endl;
+    *out << count_fp_div_seen << endl;
+    *out << count_fp_div_corr << endl;
 
-    *out << "Count int_mul Seen: " << count_int_mul_seen << endl;
-    *out << "Count int_mul Correct: " << count_int_mul_corr << endl;
+    *out << count_int_mul_seen << endl;
+    *out << count_int_mul_corr << endl;
 
-    *out << "Count int_div Seen: " << count_int_div_seen << endl;
-    *out << "Count int_div Correct: " << count_int_div_corr << endl;
+    *out << count_int_div_seen << endl;
+    *out << count_int_div_corr << endl;
 
-    *out << "Count load Seen: " << count_load_seen << endl;
-    *out << "Count load Correct: " << count_load_corr << endl;
+    *out << count_load_seen << endl;
+    *out << count_load_corr << endl;
 }
 
 UINT64 getRelevantHistoryBits(UINT64 table_index) {
@@ -278,8 +278,12 @@ UINT64 getRelevantHistoryBits(UINT64 table_index) {
 
 void update_vt_c_and_u(int table_index, size_t vt_index, PredictionStatus prediction_status) {
     if (prediction_status == correct) {
-        if (vt_tables[table_index][vt_index].counter < counter_max) {
-            vt_tables[table_index][vt_index].counter++;
+        UINT8 counter_val = vt_tables[table_index][vt_index].counter;
+        if (counter_val< counter_max) {
+            int rand_val = rand() % forward_transition_probabilities[counter_val];
+            if (rand_val == 0) {
+                vt_tables[table_index][vt_index].counter++;
+            }
         }
         vt_tables[table_index][vt_index].useful = true;
     }
@@ -294,8 +298,12 @@ void update_vt_c_and_u(int table_index, size_t vt_index, PredictionStatus predic
 void update_lvp_c(ADDRINT ins_ptr, PredictionStatus prediction_status) {
     size_t lvp_index = (std::hash<unsigned long long>{}(ins_ptr) % lvp_size);
     if (prediction_status == correct) {
-        if (lvp_table[lvp_index].counter < counter_max) {
-            lvp_table[lvp_index].counter++;
+        UINT8 counter_val = lvp_table[lvp_index].counter;
+        if (counter_val < counter_max) {
+            int rand_val = rand() % forward_transition_probabilities[counter_val];
+            if (rand_val == 0) {
+                lvp_table[lvp_index].counter++;
+            }
         }
     }
     else {
